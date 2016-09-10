@@ -31,7 +31,6 @@
 #define FIELD_HH_V      3500 //Maximum Field voltage
 #define FIELD_DEFAULT_V 2500 //Maximum Field voltage
 #define FIELD_MIN_V     2000 //Maximum Field voltage
-#define Kc 1.5 //Current controller gain
 #define I_MAX 40 //Software limited maximum phase current (with 0,8333mohm shunt)
 #define OVLO_V 60 //Over voltage lockout threshold
 #define UVLO_V 20 //Under voltage lockout threshold
@@ -367,7 +366,10 @@ void loop() {
 
   // TODO: Consider limiting Stator_out in case of high average current.
   // Maybe increment momentReq 
-
+  if (getCurrent_A() > I_MAX) {
+    momentReq++;
+  }
+  
   
   // Adjust Field voltage according to throttle level
   switch (momentReq) {
@@ -378,6 +380,7 @@ void loop() {
     Field_out = (float)FIELD_HIGH / BatteryVoltage_mV;
     break;
   case  2:
+  case  3:
     Field_out = (float)FIELD_HH / BatteryVoltage_mV;
     break;
   default:
