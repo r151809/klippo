@@ -32,8 +32,9 @@
 // Parameters
 #define THR_LOW_V       1.0 //Throttle input 0% level
 #define THR_HIGH_V      4.0 //Throttle input 100% level
-#define FIELD_DEFAULT_V 6000 //Maximum Field voltage
+#define FIELD_DEFAULT_V 7100 //Maximum Field voltage
 #define FIELD_BREAK_V   2000 //Maximum Field voltage
+#define FIELD_PWM_CORRECTION 1080 // Multiplication value to ouput Volts
 #define I_MAX 30 //Software limited maximum phase current (with 0,8333mohm shunt)
 #define TEMP_60C 576 //
 #define TEMP_70C 593 //
@@ -50,8 +51,8 @@ int THR_HIGH = (float)THR_HIGH_V*1024/5; //Throttle input 100% level (Scale: 102
 //#define UVLO_mV 44500ull // UVLO in mV
 
 #define MAX_THROTTLE   900
-#define MAX_THROTTLE_P 300
-#define MAX_THROTTLE_I 900
+#define MAX_THROTTLE_P 400
+#define MAX_THROTTLE_I 500
 #define MAX_THROTTLE_D 400
 
 // Variables
@@ -100,14 +101,14 @@ unsigned long long getCompensatedUVLO_mV(long long currentA) {
   if (currentA < 2) {
     return 46000ull; // Idle voltage must be higher
   } else if (currentA < 5) {
-    return 44500ull; // 1C 
+    return 45000ull; // 0,2..1C == Idling
   } else if (currentA < 9) {
-    return 44000ull; // 2 C
+    return 44500ull; // 1..2 C == Light cutting
   } else if (currentA < 21) {
-    return 43500ull; // 5 C
+    return 43500ull; // 2..5 C == Heavy cutting
   } else {
-    return 43000ull; // High current
-  }    
+    return 43200ull; // 5.. C  == Impossibly high current
+  }
 }
 
 unsigned int VBattArray[16];
@@ -206,29 +207,37 @@ void setup() {
   */
   speedSet = 255;
 
+  // Quick average update
+  for (i=0; i<16; i++) {
+    updateVBatt();  
+  }
+  
   unsigned long long BatteryVoltage_mV = getVoltage_mV();
 
   Serial.print("Battery avg ");
-  Serial.print((unsigned int)getVoltage_mV(), DEC);
+  Serial.print((unsigned int)BatteryVoltage_mV, DEC);
   Serial.println(" mV");
 
-  fieldPwm[0] = ((long long)(FIELD_DEFAULT_V)*1024) / BatteryVoltage_mV;
-  fieldPwm[1] = ((long long)(FIELD_DEFAULT_V)*1024) / BatteryVoltage_mV;
-  fieldPwm[2] = ((long long)(FIELD_DEFAULT_V)*1024) / BatteryVoltage_mV;
-  fieldPwm[3] = ((long long)(FIELD_DEFAULT_V)*1024) / BatteryVoltage_mV;
-  fieldPwm[4] = ((long long)(FIELD_DEFAULT_V)*1024) / BatteryVoltage_mV;
-  fieldPwm[5] = ((long long)(FIELD_DEFAULT_V)*1024) / BatteryVoltage_mV;
-  fieldPwm[6] = ((long long)(FIELD_DEFAULT_V)*1024) / BatteryVoltage_mV;
-  fieldPwm[7] = ((long long)(FIELD_DEFAULT_V)*1024) / BatteryVoltage_mV;
+  fieldPwm[0] = ((long long)(FIELD_DEFAULT_V)*FIELD_PWM_CORRECTION) / BatteryVoltage_mV;
+  fieldPwm[1] = ((long long)(FIELD_DEFAULT_V)*FIELD_PWM_CORRECTION) / BatteryVoltage_mV;
+  fieldPwm[2] = ((long long)(FIELD_DEFAULT_V)*FIELD_PWM_CORRECTION) / BatteryVoltage_mV;
+  fieldPwm[3] = ((long long)(FIELD_DEFAULT_V)*FIELD_PWM_CORRECTION) / BatteryVoltage_mV;
+  fieldPwm[4] = ((long long)(FIELD_DEFAULT_V)*FIELD_PWM_CORRECTION) / BatteryVoltage_mV;
+  fieldPwm[5] = ((long long)(FIELD_DEFAULT_V)*FIELD_PWM_CORRECTION) / BatteryVoltage_mV;
+  fieldPwm[6] = ((long long)(FIELD_DEFAULT_V)*FIELD_PWM_CORRECTION) / BatteryVoltage_mV;
+  fieldPwm[7] = ((long long)(FIELD_DEFAULT_V)*FIELD_PWM_CORRECTION) / BatteryVoltage_mV;
 
-  for (i=0; i<8; i++) {
+  for (i=0; i<1; i++) {
     Serial.print("fieldPwm[");
     Serial.print(i,DEC);
     Serial.print("] = ");
     Serial.println(fieldPwm[i],DEC);
 
   }
-  
+
+  Field_out = momentToField(0);
+  Timer1.pwm(PWM_FIELD, Field_out);
+
   interrupts(); // enable interrupts
   delay(1);    
 
@@ -311,7 +320,7 @@ int momentToField(int momentReq) {
 }
 
 int emergencyStop(int blinkCount) {
-  int i, j = 0;
+  int i = 0;
   unsigned int enteringVoltage = getVoltage_mV();
   unsigned int enteringCurrent = getCurrent_I();
   digitalWrite(ENABLE, LOW);
@@ -321,6 +330,8 @@ int emergencyStop(int blinkCount) {
   Serial.println("Emergency stop"); 
   Serial.print("Battery ");
   Serial.print(enteringVoltage, DEC);
+  Serial.print(" mV Current ");
+  Serial.print(enteringCurrent, DEC);
   Serial.print(" mV unfilterd ");
   Serial.print((unsigned int)getCurrentVoltage_mV(), DEC);
   Serial.println(" mV ");
@@ -361,18 +372,28 @@ int emergencyStop(int blinkCount) {
     for (i=0; i<16; i++) {
       updateVBatt();  
     }
+    Serial.println("Emergency stop"); 
+    Serial.print("Battery ");
+    Serial.print(enteringVoltage, DEC);
+    Serial.print(" mV Current ");
+    Serial.print(enteringCurrent, DEC);
+    Serial.print(" mV unfilterd ");
+    Serial.print((unsigned int)getCurrentVoltage_mV(), DEC);
+    Serial.println(" mV ");
+    Serial.print("AVG current ");
+    Serial.print( getCurrent_A(), DEC);
+    Serial.println(" A");
+    Serial.print("Temperature ");
+    Serial.print(getTemperature_C(), DEC);
+    Serial.println(" ru (Random Unit)");
+    printStatus(7, 0, 0, 0, 0, (unsigned int)getVoltage_mV());
     for (i=0;i<blinkCount;i++) {
-      printStatus(j++, 1000+i, 0, 0, 0, (unsigned int)getVoltage_mV());
       digitalWrite(LED, HIGH);
-      printStatus(j++, 1000+i, 0, 0, 0, (unsigned int)getVoltage_mV());
       delay(200);
-      printStatus(j++, 1000+i, 0, 0, 0, (unsigned int)getVoltage_mV());
       digitalWrite(LED, LOW);
-      printStatus(j++, 1000+i, 0, 0, 0, (unsigned int)getVoltage_mV());
       delay(200);
     }   
     for (i=0; i<20; i++) {
-      printStatus(j++, 2000+i, 0, 0, 0, (unsigned int)getVoltage_mV());
       delay(50);
     }
   } 
@@ -398,7 +419,7 @@ void printStatus(int timerCnt, int speedCount, int currentThrottle, int stator, 
     Serial.print(HW_OC, DEC);
     Serial.print(" Temp ");
     Serial.print(getTemperature_C(), DEC);
-    Serial.println(" ru (Random Unit)");
+    Serial.print(" ru (Random Unit)");
     Serial.println("");
     break;
     /*
@@ -477,10 +498,12 @@ void loop() {
     attachInterrupt(digitalPinToInterrupt(IC_CLR), ISR_over_current_sensed, FALLING); //Enables interrupt handling if overcurrent is sensed by hardware
     
     if (handleOn == 1) {
+      // Do we really need this slowliness?
       if (speedSet > DEFAULT_SPEED)
-	speedSet -= 4;
+	speedSet -= 8;
       else
 	speedSet = DEFAULT_SPEED;
+      // IIR for throttle change - this makes things smoother
       Throttle -= Throttle/16;
       Throttle += throttleCtrl(speedSet, speedCount) / 16;
     } else {
@@ -631,9 +654,17 @@ int throttleCtrl( int targetSpeed, int speedCount ) {
     PIDClipD++;
   }
 
-  throttle  = throttleI;
+  // Feed-forward component
+  if ((targetSpeed == 0) || (targetSpeed == 255)) {
+    throttle = 0;
+  } else {
+    throttle = 550 - speedCount*2; // 400 at target speed
+  }
+  // Feed-back component
   throttle += throttleP;
+  throttle += throttleI;
   throttle += throttleD;
+  
   if (throttle > MAX_THROTTLE) {
     throttle = MAX_THROTTLE;
     PIDClip++;
@@ -641,8 +672,8 @@ int throttleCtrl( int targetSpeed, int speedCount ) {
 
   // In case of HW detected over current we make dramatic adjustment
   if (OC_cnt != HW_OC) {
-    throttle  -= throttle  / 4;
-    throttleI -= throttleI / 4;
+    throttle  -= throttle  / 8;
+    throttleI -= throttleI / 8;
     OC_cnt = HW_OC;
   }
   
