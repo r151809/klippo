@@ -239,7 +239,11 @@ void setup() {
   Timer1.pwm(PWM_FIELD, Field_out);
 
   interrupts(); // enable interrupts
-  delay(1);    
+
+  // Small delay after enabling the field, before starting up should allow some
+  // field to grow up. This should help in keeping the startup phase currents
+  // in more reasonable level (less HW_OC events).
+  delay(100);    
 
 }
 
